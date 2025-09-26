@@ -1,0 +1,70 @@
+{
+  "entities": {
+    "User": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "User",
+      "type": "object",
+      "description": "Represents a user of the OceanWise application.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the user."
+        },
+        "userType": {
+          "type": "string",
+          "description": "Type of user (Fisherman, Scientist, Policymaker)."
+        },
+        "language": {
+          "type": "string",
+          "description": "Preferred language of the user."
+        },
+        "savedFilters": {
+          "type": "array",
+          "description": "Array of saved filter criteria.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "favoriteSpecies": {
+          "type": "array",
+          "description": "Array of the users favorite fish species.",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "userType",
+        "language"
+      ]
+    }
+  },
+  "auth": {
+    "providers": [
+      "password",
+      "anonymous"
+    ]
+  },
+  "firestore": {
+    "structure": [
+      {
+        "path": "/users/{userId}",
+        "definition": {
+          "entityName": "User",
+          "schema": {
+            "$ref": "#/backend/entities/User"
+          },
+          "description": "Stores user profile data. This path ensures that only the authenticated user can access their own data, supporting the personalized aspects of the application such as saved filters and favorite species. User data is stored in a private path `/users/{userId}`.",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique identifier for the user, matching the Firebase Authentication UID."
+            }
+          ]
+        }
+      }
+    ],
+    "reasoning": "This Firestore structure prioritizes authorization independence and QAPs (Rules are not Filters). User data is stored in a path-based structure under `/users/{userId}`. This ensures private user data. The structure is designed to avoid `get()` calls in security rules, which improves scalability and security. By storing the user data in a private path, it's simple to implement the login page feature. Because all the user info is contained on the document referenced by the `request.auth.uid` path, the security rules are as simple as `request.auth.uid == userId`."
+  }
+}

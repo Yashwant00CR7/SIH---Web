@@ -1,0 +1,58 @@
+/**
+ * @fileoverview Firestore Security Rules for OceanWise application.
+ *
+ * Core Philosophy:
+ * This ruleset enforces a strict user-ownership model. Each user can only
+ * access and modify their own data stored under their unique user ID.
+ *
+ * Data Structure:
+ * All user data is nested under /users/{userId}. This structure simplifies
+ * authorization by directly linking the authenticated user's UID to their
+ * data path.
+ *
+ * Key Security Decisions:
+ * - User listing is disallowed to protect user privacy.
+ * - All write operations are strictly limited to the owning user.
+ *
+ * Denormalization for Authorization:
+ * The `id` field inside the `User` document MUST match the `userId` in the path
+ * `/users/{userId}`. This denormalization is crucial for efficient authorization
+ * and prevents the need for complex queries or `get()` calls within the rules.
+ */
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /**
+     * @description Protects user profile data, ensuring only the authenticated user can access their own data.
+     * @path /users/{userId}
+     * @allow (create) User with ID matching auth UID can create their profile.
+     * @allow (get, list) User with ID matching auth UID can read their profile.
+     * @allow (update, delete) User with ID matching auth UID can update/delete their profile.
+     * @deny (create) User with ID not matching auth UID cannot create a profile.
+     * @deny (get, list) User with ID not matching auth UID cannot read another user's profile.
+     * @deny (update, delete) User with ID not matching auth UID cannot update/delete another user's profile.
+     * @principle Enforces document ownership for all operations.
+     */
+    match /users/{userId} {
+      function isSignedIn() {
+        return request.auth != null;
+      }
+
+      function isOwner(userId) {
+        return request.auth.uid == userId;
+      }
+
+      function isExistingOwner(userId) {
+        return isOwner(userId) && resource != null;
+      }
+
+      allow get: if isOwner(userId);
+      allow list: if false;
+
+      allow create: if isOwner(userId) && request.resource.data.id == userId;
+      allow update: if isExistingOwner(userId) && request.resource.data.id == resource.data.id;
+      allow delete: if isExistingOwner(userId);
+    }
+  }
+}
