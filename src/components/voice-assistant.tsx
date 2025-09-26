@@ -36,16 +36,19 @@ export function VoiceAssistant({
   const { toast } = useToast();
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const streamingTimeoutRef = useRef<NodeJS.Timeout>();
+  const inputRef = useRef<HTMLInputElement>(null);
 
 
-  // Word-by-word streaming animation
+  // Fast word-by-word streaming animation
   const streamText = useCallback((text: string, messageIndex: number) => {
     const words = text.split(' ');
     let currentWordIndex = 0;
     
     const streamNextWord = () => {
       if (currentWordIndex < words.length) {
-        const displayedText = words.slice(0, currentWordIndex + 1).join(' ');
+        // Stream multiple words at once for faster display
+        const wordsToAdd = Math.min(3, words.length - currentWordIndex);
+        const displayedText = words.slice(0, currentWordIndex + wordsToAdd).join(' ');
         
         setConversation(prev => 
           prev.map((msg, idx) => 
@@ -55,8 +58,8 @@ export function VoiceAssistant({
           )
         );
         
-        currentWordIndex++;
-        streamingTimeoutRef.current = setTimeout(streamNextWord, 100); // 100ms delay between words
+        currentWordIndex += wordsToAdd;
+        streamingTimeoutRef.current = setTimeout(streamNextWord, 30); // Much faster 30ms delay
       } else {
         // Streaming complete
         setConversation(prev => 
@@ -98,8 +101,8 @@ export function VoiceAssistant({
         const messageIndex = newConversation.length - 1;
         setStreamingMessageIndex(messageIndex);
         
-        // Start streaming after a short delay
-        setTimeout(() => streamText(response, messageIndex), 300);
+        // Start streaming immediately
+        setTimeout(() => streamText(response, messageIndex), 50);
         
         return newConversation;
       });
@@ -124,8 +127,8 @@ export function VoiceAssistant({
     try {
       await navigator.clipboard.writeText(text);
       toast({
-        title: "Copied!",
-        description: "Message copied to clipboard.",
+        title: "Copied",
+        description: "Response copied to clipboard.",
       });
     } catch (error) {
       toast({
@@ -139,10 +142,40 @@ export function VoiceAssistant({
   // Text-to-speech
   const speakText = (text: string) => {
     if ('speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance(text);
+      // Stop any current speech
+      speechSynthesis.cancel();
+      
+      // Clean text for speech (remove markdown)
+      const cleanText = text.replace(/\*\*(.*?)\*\*/g, '$1');
+      
+      const utterance = new SpeechSynthesisUtterance(cleanText);
       utterance.rate = 0.8;
       utterance.pitch = 1;
+      utterance.volume = 0.8;
+      
+      // Add some personality to the voice
+      const voices = speechSynthesis.getVoices();
+      const preferredVoice = voices.find(voice => 
+        voice.name.includes('Google') || 
+        voice.name.includes('Microsoft') ||
+        voice.lang.startsWith('en')
+      );
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+      }
+      
       speechSynthesis.speak(utterance);
+      
+      toast({
+        title: "Audio Playback",
+        description: "Playing response audio.",
+      });
+    } else {
+      toast({
+        variant: "destructive",
+        title: "Not Supported",
+        description: "Text-to-speech is not supported in this browser.",
+      });
     }
   };
 
@@ -168,6 +201,36 @@ export function VoiceAssistant({
     };
   }, []);
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!open) return;
+      
+      // Ctrl/Cmd + K to focus input
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+      
+      // Escape to close dialog
+      if (e.key === 'Escape' && !isLoading) {
+        onOpenChange(false);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [open, isLoading, onOpenChange]);
+
+  // Clear conversation
+  const clearConversation = () => {
+    setConversation([]);
+    toast({
+      title: "History Cleared",
+      description: "Conversation history has been reset.",
+    });
+  };
+
   // Format text with bold support
   const formatText = (text: string) => {
     // Split text by **bold** markers and create spans
@@ -178,45 +241,63 @@ export function VoiceAssistant({
         // Remove ** markers and make bold
         const boldText = part.slice(2, -2);
         return (
-          <strong key={index} className="font-bold text-primary">
+          <strong key={index} className="font-bold text-primary break-words">
             {boldText}
           </strong>
         );
       }
-      return <span key={index}>{part}</span>;
+      return <span key={index} className="break-words">{part}</span>;
     });
   };
 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl flex flex-col h-full sm:h-auto max-h-[90vh] w-full">
+      <DialogContent className="sm:max-w-2xl flex flex-col max-h-[90vh] w-full overflow-hidden"
+        style={{ height: '80vh' }}
+      >
         <DialogHeader className="pb-4 border-b">
-          <DialogTitle className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-primary" />
-            AI Marine Assistant
-          </DialogTitle>
-          <DialogDescription>
-            Ask questions about marine species, locations, and conservation. Supports **bold text** formatting.
-          </DialogDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <DialogTitle className="flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-primary" />
+                AI Marine Assistant
+              </DialogTitle>
+              <DialogDescription>
+                Ask questions about marine species, locations, and conservation.
+              </DialogDescription>
+            </div>
+            {conversation.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearConversation}
+                className="text-xs"
+              >
+                Clear Chat
+              </Button>
+            )}
+          </div>
         </DialogHeader>
         
-        <ScrollArea className="flex-1 -mx-6 px-6 py-4" ref={scrollAreaRef}>
-          <div className="space-y-6 min-h-[400px]">
+        <div className="flex-1 overflow-hidden">
+          <ScrollArea className="h-full" ref={scrollAreaRef}>
+            <div className="px-6 py-4">
+              <div className="space-y-6">
             {conversation.length === 0 && (
               <div className="text-center text-muted-foreground pt-12">
                 <Sparkles className="mx-auto h-12 w-12 mb-4 text-primary/50" />
-                <h3 className="text-lg font-medium mb-2">Welcome to AI Marine Assistant</h3>
-                <p className="text-sm">Start a conversation about marine species and conservation!</p>
-                <div className="mt-6 grid grid-cols-1 gap-2 max-w-md mx-auto">
-                  <div className="text-xs text-left p-2 bg-muted/50 rounded border-l-2 border-primary/30">
-                    💡 Try: "Tell me about **endangered** marine species"
+                <h3 className="text-lg font-medium mb-2">Marine Species Assistant</h3>
+                <p className="text-sm mb-6">Ask questions about marine biodiversity, species locations, and conservation status.</p>
+                <div className="grid grid-cols-1 gap-3 max-w-lg mx-auto">
+                  <div className="text-sm text-left p-3 bg-muted/50 rounded-lg border-l-2 border-primary/30">
+                    "What endangered species are found in the Indian Ocean?"
                   </div>
-                  <div className="text-xs text-left p-2 bg-muted/50 rounded border-l-2 border-primary/30">
-                    🐠 Try: "Where can I find **Bluefin Tuna**?"
+                  <div className="text-sm text-left p-3 bg-muted/50 rounded-lg border-l-2 border-primary/30">
+                    "Show me population data for Bluefin Tuna"
                   </div>
-                  <div className="text-xs text-left p-2 bg-muted/50 rounded border-l-2 border-primary/30">
-                    📊 Try: "Show me **population trends** for sharks"
+                  <div className="text-sm text-left p-3 bg-muted/50 rounded-lg border-l-2 border-primary/30">
+                    "Which marine habitats have the highest biodiversity?"
                   </div>
                 </div>
               </div>
@@ -225,7 +306,7 @@ export function VoiceAssistant({
             {conversation.map((message, index) => (
               <div
                 key={index}
-                className={`flex items-start gap-3 ${
+                className={`flex items-start gap-3 w-full ${
                   message.role === "user" ? "justify-end" : ""
                 } group`}
               >
@@ -235,9 +316,9 @@ export function VoiceAssistant({
                   </div>
                 )}
                 
-                <div className="flex flex-col gap-2 max-w-[80%]">
+                <div className="flex flex-col gap-2 max-w-[75%] min-w-0">
                   <div
-                    className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                    className={`rounded-2xl px-4 py-3 text-sm leading-relaxed break-words ${
                       message.role === "user"
                         ? "bg-primary text-primary-foreground shadow-sm"
                         : "bg-background border shadow-sm"
@@ -245,7 +326,15 @@ export function VoiceAssistant({
                   >
                     {message.role === "model" ? (
                       <div className="space-y-1">
-                        <div className="prose prose-sm max-w-none">
+                        <div 
+                          className="prose prose-sm max-w-none break-words overflow-wrap-anywhere"
+                          style={{ 
+                            wordWrap: 'break-word', 
+                            overflowWrap: 'break-word',
+                            wordBreak: 'break-word',
+                            hyphens: 'auto'
+                          }}
+                        >
                           {formatText(message.displayedContent || message.content)}
                         </div>
                         {message.isStreaming && (
@@ -257,7 +346,17 @@ export function VoiceAssistant({
                         )}
                       </div>
                     ) : (
-                      <div>{formatText(message.content)}</div>
+                      <div 
+                        className="break-words overflow-wrap-anywhere"
+                        style={{ 
+                          wordWrap: 'break-word', 
+                          overflowWrap: 'break-word',
+                          wordBreak: 'break-word',
+                          hyphens: 'auto'
+                        }}
+                      >
+                        {formatText(message.content)}
+                      </div>
                     )}
                   </div>
                   
@@ -300,22 +399,26 @@ export function VoiceAssistant({
                 </div>
                 <div className="rounded-2xl px-4 py-3 text-sm bg-background border shadow-sm flex items-center gap-2">
                   <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                  <span className="text-muted-foreground">AI is thinking...</span>
+                  <span className="text-muted-foreground">Analyzing...</span>
                 </div>
               </div>
             )}
-          </div>
-        </ScrollArea>
+              </div>
+            </div>
+          </ScrollArea>
+        </div>
         
         <div className="pt-4 border-t">
           <form onSubmit={handleSubmit} className="relative">
             <Input
+              ref={inputRef}
               id="query"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder='Ask about marine species... (Use **text** for bold formatting)'
+              placeholder="Ask about marine species, conservation, or biodiversity..."
               className="pr-12 h-12 text-base"
               disabled={isLoading}
+              autoFocus
             />
             <Button
               type="submit"
@@ -327,9 +430,8 @@ export function VoiceAssistant({
               <Send className="h-4 w-4" />
             </Button>
           </form>
-          <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
-            <span>Press Enter to send • Use **text** for bold</span>
-            <span>{conversation.length} messages</span>
+          <div className="flex items-center justify-end mt-2 text-xs text-muted-foreground">
+            <span>{conversation.length} {conversation.length === 1 ? 'message' : 'messages'}</span>
           </div>
         </div>
       </DialogContent>
